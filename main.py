@@ -1,65 +1,32 @@
 from flask_cors import CORS
 from flask import Flask, request, jsonify
-from transformers import pipeline
-import os
+from sentence_transformers import SentenceTransformer
+from sklearn.metrics.pairwise import cosine_similarity
 
 app = Flask(__name__)
-CORS(app)
-# Initialize summarizer with efficient settings
-summarizer = pipeline(
-    "summarization",
-    model="linydub/bart-large-samsum",
-    device=-1,  # Force CPU usage
-    torch_dtype="auto"
-)
+CORS
+model = SentenceTransformer('all-MiniLM-L6-v2')
 
-@app.route('/summarize', methods=['POST'])
-def summarize():
-    try:
-        # Get and validate input
-        text = request.json.get('text', '').strip()
-        
-        if not text:
-            return jsonify({"error": "No text provided"}), 400
-            
-        word_count = len(text.split())
-        
-        # Handle different input lengths
-        if word_count < 10:
-            return jsonify({
-                "warning": "Input too short for meaningful summarization",
-                "original_text": text,
-                "word_count": word_count
-            })
-            
-        # Calculate dynamic length limits
-        max_len = max(10, min(62, word_count // 2))  # 10-62 words, max half of input
-        min_len = max(2, word_count // 4)  # At least 2 words
-        
-        # Process summary
-        summary = summarizer(
-            text,
-            max_length=max_len,
-            min_length=min_len,
-            do_sample=False
-        )
-        
-        return jsonify({
-            "summary": summary[0]['summary_text'],
-            "original_length": word_count,
-            "summary_length": len(summary[0]['summary_text'].split())
-        })
-        
-    except Exception as e:
-        return jsonify({
-            "error": str(e),
-            "message": "Summarization failed"
-        }), 500
+# Mock employee data (replace with real data later)
+employees = [
+    {"id": 1, "name": "John", "skills": "Python JavaScript", "rating": 4.5},
+    {"id": 2, "name": "Alice", "skills": "Design UI/UX", "rating": 4.2}
+]
+
+@app.route('/suggest', methods=['POST'])
+def suggest():
+    task_req = request.json.get("requirements", "")
+    task_embedding = model.encode(task_req)
+    
+    suggestions = []
+    for emp in employees:
+        emp_embedding = model.encode(emp["skills"])
+        similarity = cosine_similarity([task_embedding], [emp_embedding])[0][0]
+        weighted_score = similarity * emp["rating"]
+        suggestions.append({"id": emp["id"], "name": emp["name"], "score": weighted_score})
+    
+    suggestions.sort(key=lambda x: x["score"], reverse=True)
+    return jsonify({"suggestions": suggestions[:3]})
 
 if __name__ == '__main__':
-    # Configure for production
-    app.run(
-        host='0.0.0.0',
-        port=5002,
-        threaded=True
-    )
+    app.run(host='0.0.0.0', port=5001)
